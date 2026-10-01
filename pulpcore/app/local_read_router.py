@@ -8,9 +8,9 @@ class MavenReadReplicaRouter:
     def allow_relation(self, obj1, obj2, **hints):
         # Reads use the standby, but all related objects are written on the
         # primary; permit Django to construct those primary-side relations.
-        if obj1._state.db == "default" or obj2._state.db == "default":
-            return True
-        return None
+        # Django may combine an object loaded from the replica with a new
+        # primary-side object while constructing an API write relation.
+        return True
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):
         return db == "default"
