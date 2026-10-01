@@ -132,7 +132,15 @@ enabled_plugins = preload_settings.get("ENABLED_PLUGINS", None)
 plugin_settings = []
 for entry_point in entry_points(group="pulpcore.plugin"):
     if enabled_plugins is None or entry_point.name in enabled_plugins:
-        plugin_app = entry_point.load()
+        try:
+            plugin_app = entry_point.load()
+        except AttributeError as exc:
+            # Editable plugin imports can expose stale legacy entry-point
+            # targets; resolve the conventional AppConfig class directly.
+            if "default_app_config" not in str(exc):
+                raise
+            plugin_class = "".join(part.title() for part in entry_point.name.split("_"))
+            plugin_app = f"{entry_point.module}.app.{plugin_class}PluginAppConfig"
         plugin_settings.append(f"{entry_point.module}.app.settings")
         INSTALLED_APPS += [plugin_app]
 
