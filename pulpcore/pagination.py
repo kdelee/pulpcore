@@ -1,5 +1,6 @@
 from rest_framework.pagination import LimitOffsetPagination
 
+from pulpcore.app.experiments import run_experiment
 from pulpcore.app.models import RepositoryVersion
 from pulpcore.app.util import extract_pk
 
@@ -39,6 +40,11 @@ class RepositoryVersionSummaryPagination(LimitOffsetPagination):
             if not version.complete:
                 return super().get_count(queryset)
             pulp_type = queryset.model.get_pulp_type()
-            return getattr(version, version_filters[version_filter])(pulp_type)
+            return run_experiment(
+                "PULP-1996-COUNT",
+                control=queryset.count,
+                candidate=lambda: getattr(version, version_filters[version_filter])(pulp_type),
+                correlation_id=self._request.META.get("HTTP_CORRELATION_ID"),
+            )
         except (RepositoryVersion.DoesNotExist, ValueError):
             return super().get_count(queryset)
