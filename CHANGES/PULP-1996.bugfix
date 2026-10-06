@@ -1,0 +1,1 @@
+Use persisted repository-version summaries for exact content-listing pagination counts when the request has no content filters.

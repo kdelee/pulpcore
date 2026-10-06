@@ -1,0 +1,44 @@
+from rest_framework.pagination import LimitOffsetPagination
+
+from pulpcore.app.models import RepositoryVersion
+from pulpcore.app.util import extract_pk
+
+
+class RepositoryVersionSummaryPagination(LimitOffsetPagination):
+    """Use the persisted repository-version summary for unfiltered content counts."""
+
+    def paginate_queryset(self, queryset, request, view=None):
+        self._request = request
+        return super().paginate_queryset(queryset, request, view)
+
+    def get_count(self, queryset):
+        version_filters = {
+            "repository_version": "count",
+            "repository_version_added": "added_count",
+            "repository_version_removed": "removed_count",
+        }
+        selected_filters = [key for key in version_filters if key in self._request.query_params]
+        if len(selected_filters) != 1:
+            return super().get_count(queryset)
+        version_filter = selected_filters[0]
+        repository_version_href = self._request.query_params[version_filter]
+
+        # A summary is exact for a completed, immutable repository version.  Only use it for
+        # the unfiltered content query; arbitrary filters require the database count.
+        if any(
+            key not in {"repository_version", "limit", "offset", "ordering", "fields"}
+            for key in self._request.query_params
+        ):
+            return super().get_count(queryset)
+
+        try:
+            version = RepositoryVersion.objects.get(
+                pk=extract_pk(repository_version_href),
+                repository__pulp_domain=self._request.pulp_domain,
+            )
+            if not version.complete:
+                return super().get_count(queryset)
+            pulp_type = queryset.model.get_pulp_type()
+            return getattr(version, version_filters[version_filter])(pulp_type)
+        except (RepositoryVersion.DoesNotExist, ValueError):
+            return super().get_count(queryset)

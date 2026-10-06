@@ -27,7 +27,6 @@ from pulpcore.app.util import (
     get_view_name_for_model,
     reverse,
 )
-from pulpcore.cache import Cache
 from pulpcore.constants import ALL_KNOWN_CONTENT_CHECKSUMS, PROTECTED_REPO_VERSION_MESSAGE
 from pulpcore.download.factory import DownloaderFactory
 from pulpcore.exceptions import ContentOverwriteError, ResourceImmutableError
@@ -982,6 +981,24 @@ class RepositoryVersion(BaseModel):
         unique_together = ("repository", "number")
         get_latest_by = "number"
         ordering = ("number",)
+
+    def _get_count(self, content_type, count_type):
+        counts = self.counts.filter(count_type=count_type)
+        if content_type is not None:
+            counts = counts.filter(content_type=content_type)
+        return counts.aggregate(total=models.Sum("count"))["total"] or 0
+
+    def count(self, content_type=None):
+        """Return the number of present content units, optionally by type."""
+        return self._get_count(content_type, RepositoryVersionContentDetails.PRESENT)
+
+    def added_count(self, content_type=None):
+        """Return the number of content units added, optionally by type."""
+        return self._get_count(content_type, RepositoryVersionContentDetails.ADDED)
+
+    def removed_count(self, content_type=None):
+        """Return the number of content units removed, optionally by type."""
+        return self._get_count(content_type, RepositoryVersionContentDetails.REMOVED)
 
     def _content_relationships(self):
         """
