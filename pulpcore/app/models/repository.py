@@ -18,6 +18,7 @@ from django.db.models import F, Func, Q, Value
 from django_lifecycle import AFTER_UPDATE, BEFORE_CREATE, BEFORE_DELETE, hook
 from rest_framework.exceptions import APIException
 
+from pulpcore.app.experiments import run_experiment
 from pulpcore.app.loggers import deprecation_logger
 from pulpcore.app.util import (
     batch_qs,
@@ -1061,12 +1062,17 @@ class RepositoryVersion(BaseModel):
         if content_qs is None:
             content_qs = Content.objects
 
-        # Default keeps the legacy ``unnest(content_ids)`` subquery. Set
-        # ``USE_INTERVAL_CONTENT_QUERY=True`` (env ``PULP_USE_INTERVAL_CONTENT_QUERY``)
-        # to switch to the ``core_repositorycontent`` interval join, so the rewritten
-        # path can be benchmarked against the baseline without code changes.
-        if getattr(settings, "USE_INTERVAL_CONTENT_QUERY", False):
-            return content_qs.filter(pk__in=self.content_pks_subquery())
+        # A/B experiment: variant A uses the legacy content_ids/unnest query; variant B
+        # uses the interval-table query. The default probability is zero so the experiment
+        # is opt-in until explicitly enabled in deployment settings.
+        p_candidate = float(getattr(settings, "EXPERIMENT_CONTENT_QUERY_P_CANDIDATE", 0.0))
+        if p_candidate:
+            return run_experiment(
+                "PULP-1996-PAGE",
+                control=lambda: content_qs.filter(pk__in=self.content_ids_subquery()),
+                candidate=lambda: content_qs.filter(pk__in=self.content_pks_subquery()),
+                p_candidate=p_candidate,
+            )
         return content_qs.filter(pk__in=self.content_ids_subquery())
 
     def content_ids_subquery(self):
