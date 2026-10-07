@@ -27,6 +27,7 @@ from pulpcore.app.util import (
     get_view_name_for_model,
     reverse,
 )
+from pulpcore.cache import Cache
 from pulpcore.constants import ALL_KNOWN_CONTENT_CHECKSUMS, PROTECTED_REPO_VERSION_MESSAGE
 from pulpcore.download.factory import DownloaderFactory
 from pulpcore.exceptions import ContentOverwriteError, ResourceImmutableError
@@ -983,10 +984,24 @@ class RepositoryVersion(BaseModel):
         ordering = ("number",)
 
     def _get_count(self, content_type, count_type):
+        cache_key = f"repository-version-count:{self.pk}:{count_type}:{content_type or '*'}"
+        if self.complete and settings.CACHE_ENABLED:
+            cached = Cache().get(cache_key, base_key="REPOSITORY_VERSION_COUNTS")
+            if cached is not None:
+                return int(cached)
+
         counts = self.counts.filter(count_type=count_type)
         if content_type is not None:
             counts = counts.filter(content_type=content_type)
-        return counts.aggregate(total=models.Sum("count"))["total"] or 0
+        result = counts.aggregate(total=models.Sum("count"))["total"] or 0
+        if self.complete and settings.CACHE_ENABLED:
+            Cache().set(
+                cache_key,
+                result,
+                expires=settings.CACHE_SETTINGS["EXPIRES_TTL"],
+                base_key="REPOSITORY_VERSION_COUNTS",
+            )
+        return result
 
     def count(self, content_type=None):
         """Return the number of present content units, optionally by type."""
