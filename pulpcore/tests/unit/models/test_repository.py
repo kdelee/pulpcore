@@ -2,10 +2,135 @@ from itertools import compress
 from uuid import uuid4
 
 import pytest
+from rest_framework.request import Request
+from rest_framework.test import APIRequestFactory
 
-from pulpcore.app.models import RepositoryVersionContentDetails
+from pulpcore.app.models import Domain, RepositoryVersion, RepositoryVersionContentDetails
+from pulpcore.pagination import RepositoryVersionSummaryPagination
 from pulpcore.plugin.models import Artifact, Content, ContentArtifact, Repository
 from pulpcore.plugin.repo_version_utils import validate_version_paths
+
+
+def test_repository_version_count_helpers(db, repository):
+    version = RepositoryVersion.objects.create(repository=repository, number=1, complete=True)
+    RepositoryVersionContentDetails.objects.bulk_create(
+        [
+            RepositoryVersionContentDetails(
+                repository_version=version, content_type="core.one", count_type="P", count=3
+            ),
+            RepositoryVersionContentDetails(
+                repository_version=version, content_type="core.two", count_type="P", count=4
+            ),
+            RepositoryVersionContentDetails(
+                repository_version=version, content_type="core.one", count_type="A", count=5
+            ),
+            RepositoryVersionContentDetails(
+                repository_version=version, content_type="core.two", count_type="R", count=6
+            ),
+        ]
+    )
+
+    assert version.count() == 7
+    assert version.count("core.one") == 3
+    assert version.added_count() == 5
+    assert version.removed_count() == 6
+
+
+def test_repository_version_count_is_domain_scoped(db, repository):
+    other_domain = Domain.objects.create(
+        name="other-test-domain",
+        storage_class="pulpcore.app.models.storage.FileSystem",
+        storage_settings={"location": "/tmp"},
+    )
+    other_repository = repository.__class__.objects.create(name=uuid4(), pulp_domain=other_domain)
+    version = RepositoryVersion.objects.create(repository=other_repository, number=1, complete=True)
+    RepositoryVersionContentDetails.objects.create(
+        repository_version=version, content_type="core.content", count_type="P", count=7
+    )
+
+    request = Request(
+        APIRequestFactory().get(
+            "/content/core/content/",
+            {
+                "repository_version": (
+                    f"/pulp/default/api/v3/repositories/file/file/{other_repository.pk}/versions/1/"
+                )
+            },
+        )
+    )
+    request.pulp_domain = repository.pulp_domain
+    paginator = RepositoryVersionSummaryPagination()
+    paginator._request = request
+
+    class Content:
+        @staticmethod
+        def get_pulp_type():
+            return "core.content"
+
+    class QuerySet:
+        model = Content
+
+        @staticmethod
+        def count():
+            return 0
+
+    assert paginator.get_count(QuerySet()) == 0
+
+    for reference in (f"prn:core.repositoryversion:{version.pk}", "not-a-repository-version"):
+        request = Request(
+            APIRequestFactory().get("/content/core/content/", {"repository_version": reference})
+        )
+        request.pulp_domain = repository.pulp_domain
+        paginator._request = request
+        assert paginator.get_count(QuerySet()) == 0
+
+
+def test_repository_version_count_accepts_href_and_prn(db, repository, monkeypatch):
+    version = RepositoryVersion.objects.create(repository=repository, number=1, complete=True)
+    RepositoryVersionContentDetails.objects.create(
+        repository_version=version, content_type="core.content", count_type="P", count=7
+    )
+
+    class Content:
+        @staticmethod
+        def get_pulp_type():
+            return "core.content"
+
+    class QuerySet:
+        model = Content
+
+        @staticmethod
+        def count():
+            return 99
+
+    import pulpcore.pagination as pagination
+
+    monkeypatch.setattr(
+        pagination,
+        "resolve",
+        lambda _path: type("Match", (), {"kwargs": {"repository_pk": repository.pk, "number": "1"}})(),
+    )
+
+    references = (
+        f"/pulp/default/api/v3/repositories/file/file/{repository.pk}/versions/1/",
+        f"prn:core.repositoryversion:{version.pk}",
+    )
+    for reference in references:
+        request = Request(
+            APIRequestFactory().get("/content/core/content/", {"repository_version": reference})
+        )
+        request.pulp_domain = repository.pulp_domain
+        paginator = RepositoryVersionSummaryPagination()
+        paginator._request = request
+        assert paginator.get_count(QuerySet()) == 7
+
+    request = Request(
+        APIRequestFactory().get("/content/core/content/", {"repository_version": "prn:malformed"})
+    )
+    request.pulp_domain = repository.pulp_domain
+    paginator = RepositoryVersionSummaryPagination()
+    paginator._request = request
+    assert paginator.get_count(QuerySet()) == 99
 
 
 def pks_of_next_qs(qs_generator):
