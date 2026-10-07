@@ -1063,17 +1063,13 @@ class RepositoryVersion(BaseModel):
             content_qs = Content.objects
 
         # A/B experiment: variant A uses the legacy content_ids/unnest query; variant B
-        # uses the interval-table query. The default probability is zero so the experiment
-        # is opt-in until explicitly enabled in deployment settings.
-        p_candidate = float(getattr(settings, "EXPERIMENT_CONTENT_QUERY_P_CANDIDATE", 0.0))
-        if p_candidate:
-            return run_experiment(
-                "PULP-1996-PAGE",
-                control=lambda: content_qs.filter(pk__in=self.content_ids_subquery()),
-                candidate=lambda: content_qs.filter(pk__in=self.content_pks_subquery()),
-                p_candidate=p_candidate,
-            )
-        return content_qs.filter(pk__in=self.content_ids_subquery())
+        # uses the interval-table query.
+        return run_experiment(
+            "PULP-1996-CONTENT-MEMBERSHIP",
+            control=lambda: content_qs.filter(pk__in=self.content_ids_subquery()),
+            candidate=lambda: content_qs.filter(pk__in=self.content_pks_subquery()),
+            p_candidate=0.5,
+        )
 
     def content_ids_subquery(self):
         """
