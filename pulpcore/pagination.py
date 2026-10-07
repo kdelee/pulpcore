@@ -1,8 +1,12 @@
+from urllib.parse import urlparse
+
+from django.urls import Resolver404
+from django.urls import resolve
 from rest_framework.pagination import LimitOffsetPagination
 
 from pulpcore.app.experiments import run_experiment
 from pulpcore.app.models import RepositoryVersion
-from pulpcore.app.util import extract_pk
+from pulpcore.app.util import extract_pk, resolve_prn
 
 
 class RepositoryVersionSummaryPagination(LimitOffsetPagination):
@@ -33,10 +37,26 @@ class RepositoryVersionSummaryPagination(LimitOffsetPagination):
             return super().get_count(queryset)
 
         try:
-            version = RepositoryVersion.objects.get(
-                pk=extract_pk(repository_version_href),
-                repository__pulp_domain=self._request.pulp_domain,
-            )
+            if repository_version_href.startswith("prn:"):
+                model, version_pk = resolve_prn(repository_version_href)
+                if model is not RepositoryVersion:
+                    return super().get_count(queryset)
+                version = RepositoryVersion.objects.get(
+                    pk=version_pk,
+                    repository__pulp_domain=self._request.pulp_domain,
+                )
+            else:
+                try:
+                    href_kwargs = resolve(urlparse(repository_version_href).path).kwargs
+                except Resolver404:
+                    return super().get_count(queryset)
+                if "repository_pk" not in href_kwargs or "number" not in href_kwargs:
+                    return super().get_count(queryset)
+                version = RepositoryVersion.objects.get(
+                    repository__pulp_id=href_kwargs["repository_pk"],
+                    number=int(href_kwargs["number"]),
+                    repository__pulp_domain=self._request.pulp_domain,
+                )
             if not version.complete:
                 return super().get_count(queryset)
             pulp_type = queryset.model.get_pulp_type()

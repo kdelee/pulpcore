@@ -53,7 +53,11 @@ def test_repository_version_count_is_domain_scoped(db, repository):
     request = Request(
         APIRequestFactory().get(
             "/content/core/content/",
-            {"repository_version": f"/repositories/{other_repository.pk}/versions/{version.pk}/"},
+            {
+                "repository_version": (
+                    f"/pulp/default/api/v3/repositories/file/file/{other_repository.pk}/versions/1/"
+                )
+            },
         )
     )
     request.pulp_domain = repository.pulp_domain
