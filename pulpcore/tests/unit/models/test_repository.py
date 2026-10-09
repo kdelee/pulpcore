@@ -105,10 +105,22 @@ def test_repository_version_count_accepts_href_and_prn(db, repository, monkeypat
 
     import pulpcore.pagination as pagination
 
+    experiment_variants = []
+
+    if hasattr(pagination, "run_experiment"):
+
+        def run_candidate(_id, control, candidate, **kwargs):
+            experiment_variants.append("candidate")
+            return candidate()
+
+        monkeypatch.setattr(pagination, "run_experiment", run_candidate)
+
     monkeypatch.setattr(
         pagination,
         "resolve",
-        lambda _path: type("Match", (), {"kwargs": {"repository_pk": repository.pk, "number": "1"}})(),
+        lambda _path: type(
+            "Match", (), {"kwargs": {"repository_pk": repository.pk, "number": "1"}}
+        )(),
     )
 
     references = (
@@ -123,6 +135,9 @@ def test_repository_version_count_accepts_href_and_prn(db, repository, monkeypat
         paginator = RepositoryVersionSummaryPagination()
         paginator._request = request
         assert paginator.get_count(QuerySet()) == 7
+
+    if hasattr(pagination, "run_experiment"):
+        assert experiment_variants == ["candidate", "candidate"]
 
     request = Request(
         APIRequestFactory().get("/content/core/content/", {"repository_version": "prn:malformed"})

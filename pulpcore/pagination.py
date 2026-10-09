@@ -4,7 +4,8 @@ from django.urls import Resolver404, resolve
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import LimitOffsetPagination
 
-from pulpcore.app.models import RepositoryVersion
+from pulpcore.app.experiments import run_experiment
+from pulpcore.app.models import RepositoryVersion, RepositoryVersionContentDetails
 from pulpcore.app.util import resolve_prn
 
 
@@ -62,6 +63,19 @@ class RepositoryVersionSummaryPagination(LimitOffsetPagination):
             if version is None or not version.complete:
                 return super().get_count(queryset)
             pulp_type = queryset.model.get_pulp_type()
-            return getattr(version, version_filters[version_filter])(pulp_type)
+            count_type = {
+                "repository_version": RepositoryVersionContentDetails.PRESENT,
+                "repository_version_added": RepositoryVersionContentDetails.ADDED,
+                "repository_version_removed": RepositoryVersionContentDetails.REMOVED,
+            }[version_filter]
+            if not version.counts.filter(count_type=count_type, content_type=pulp_type).exists():
+                return super().get_count(queryset)
+
+            return run_experiment(
+                "PULP-1996-COUNT",
+                control=queryset.count,
+                candidate=lambda: getattr(version, version_filters[version_filter])(pulp_type),
+                correlation_id=self._request.META.get("HTTP_CORRELATION_ID"),
+            )
         except (RepositoryVersion.DoesNotExist, ValidationError, ValueError):
             return super().get_count(queryset)
